@@ -48,16 +48,8 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.text.NumberFormat;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 
 /**
  * excel导入导出工具，也可以导出模板
@@ -199,7 +191,6 @@ public class ExcelUtils {
 		// -----------------------表头设置------------------------
 		int maxColumns = exportRules.maxColumns;
 		int maxRows = exportRules.maxRows;
-
 		// 创建表头
 		for (int i = 0; i < maxRows; i++) {
 			Row row = sheet.createRow(i);
@@ -375,6 +366,12 @@ public class ExcelUtils {
 		}
 
 		// ------------------body row-----------------
+		// 检测对象是否有集合数组类,以备做嵌套准备
+		boolean mulField = false;
+		if (!data.isEmpty()) {
+			mulField = checkHasMulField(data.get(0));
+		}
+
 		// 画图器
 		@SuppressWarnings("unchecked")
 		Drawing<Picture> createDrawingPatriarch = (Drawing<Picture>) sheet.createDrawingPatriarch();
@@ -382,39 +379,64 @@ public class ExcelUtils {
 		Map<Class<? extends Object>, Map<String, Field>> clsInfo = new HashMap<>();
 		// 存储单元格样式信息，此方式与因为POI的一个BUG
 		Map<Object, CellStyle> subCellStyle = new HashMap<>();
+		// 多余出来的行数
+		int subTotalRows = 0;
 		for (int i = 0; i < data.size(); i++) {
-			Row row = sheet.createRow(i + maxRows);
-			T t = data.get(i);
-			for (int j = 0, n = 0; n < fields.length; j++, n++) {
-				Cell cell = row.createCell(j);
-				cell.setCellStyle(cellStyleSourece);
-				// 1.序号设置
-				if (autoNum && j == 0) {
-					cell.setCellValue(i + 1);
-					n--;
-					continue;
+			// 嵌套规则开始
+			// 嵌套row个数,默认不嵌套1
+			int subRows = 1;
+			if (mulField) {
+				subRows = getSingletonCellRowSize(data.get(i));
+			}
+			// 合并使用
+			int firstRow = -1;
+			int lastRow = -1;
+			for (int k = 1; k <= subRows; k++) {
+				int realRowNum = i + maxRows + subTotalRows + k - 1;
+				if (k == 1) {
+					firstRow = realRowNum;
 				}
-				// 2.读取Map/Object对应字段值
-				if (clsInfo.get(t.getClass()) == null) {
-					clsInfo.put(t.getClass(), Common.getAllFields(t.getClass()));
+				if (k == subRows) {
+					lastRow = realRowNum;
 				}
-				Object value = readField(clsInfo, t, fields[n].getField());
-
-				// 3.填充列值
-				Column customStyle = null;
-				if (callBack != null) {
-					customStyle = Column.style();
-					value = callBack.callback(fields[n].getField(), value, t, customStyle);
+				Row row = sheet.createRow(realRowNum);
+				T t = data.get(i);
+				for (int j = 0, n = 0; n < fields.length; j++, n++) {
+					Cell cell = row.createCell(j);
+					cell.setCellStyle(cellStyleSourece);
+					// 1.序号设置
+					if (autoNum && j == 0) {
+						cell.setCellValue(i + 1);
+						n--;
+						continue;
+					}
+					// 2.读取Map/Object对应字段值
+					if (clsInfo.get(t.getClass()) == null) {
+						clsInfo.put(t.getClass(), Common.getAllFields(t.getClass()));
+					}
+					Object value = readField(clsInfo, t, fields[n].getField(), k - 1);
+					// 3.填充列值
+					Column customStyle = null;
+					if (callBack != null) {
+						customStyle = Column.style();
+						value = callBack.callback(fields[n].getField(), value, t, customStyle);
+					}
+					// 4.设置单元格值
+					setCellValue(createDrawingPatriarch, fields[n], customStyle, value, cell, subCellStyle);
 				}
-				// 4.设置单元格值
-				setCellValue(createDrawingPatriarch, fields[n], customStyle, value, cell, subCellStyle);
+			}
+			// 需要合并
+			if (subRows > 1) {
+				subTotalRows += subRows - 1;
+				CellRangeAddress cra = new CellRangeAddress(firstRow, lastRow, 2, 2);
+				sheet.addMergedRegion(cra);
 			}
 		}
 		// ------------------------footer row-----------------------------
 		if (exportRules.ifFooter) {
 			Map<String, String> footerRules = exportRules.footerRules;
 			// 构建尾行数字
-			int currRownum = exportRules.maxRows + data.size();
+			int currRownum = exportRules.maxRows + subTotalRows + data.size();
 			int[] footerNum = getFooterNum(footerRules.entrySet().iterator(), currRownum);
 			Iterator<Entry<String, String>> entries = footerRules.entrySet().iterator();
 			for (int i = 0; i < footerNum.length; i++) {
@@ -732,15 +754,16 @@ public class ExcelUtils {
 	 * @param clsInfo 类信息
 	 * @param t       当前值
 	 * @param fields  字段名称
+	 * @param index   集合下标
 	 * @return Object
 	 */
 	@SuppressWarnings("rawtypes")
-	private static Object readField(Map<Class<? extends Object>, Map<String, Field>> clsInfo, Object t, String fields) {
+	private static Object readField(Map<Class<? extends Object>, Map<String, Field>> clsInfo, Object t, String fields, int index) {
 		// 读取子属性
 		String[] split = fields.split("\\.");
 		Object value = t;
 		for (int i = 0; i < split.length; i++) {
-			value = readObjectFieldValue(value, split[i], clsInfo);
+			value = readObjectFieldValue(value, split[i], clsInfo, index);
 			// 属性为空跳出
 			if (value == null) {
 				return "";
@@ -758,9 +781,10 @@ public class ExcelUtils {
 	 * @param t       对象
 	 * @param key     field字段
 	 * @param clsInfo 类信息
+	 * @param index   集合下标
 	 * @return Object
 	 */
-	private static Object readObjectFieldValue(Object t, String key, Map<Class<? extends Object>, Map<String, Field>> clsInfo) {
+	private static Object readObjectFieldValue(Object t, String key, Map<Class<? extends Object>, Map<String, Field>> clsInfo, int index) {
 		try {
 			if (t instanceof Map) {
 				t = ((Map) t).get(key);
@@ -785,6 +809,13 @@ public class ExcelUtils {
 			}
 		} catch (Exception e) {
 			t = null;
+		}
+		// 如果是集合或者数组数据, 取出相应的下标值
+		if (t.getClass().isArray() && t.getClass() != byte[].class) {
+			return ((Object[]) t)[index];
+		}
+		if (t instanceof List) {
+			return ((List) t).get(index);
 		}
 		return t;
 	}
@@ -1077,6 +1108,56 @@ public class ExcelUtils {
 			}
 		}
 		return sheetIndexPicMap;
+	}
+
+	/**
+	 * 检测是否嵌套有多条数据
+	 *
+	 * @return
+	 */
+	private static boolean checkHasMulField(Object t) {
+		// 获取所有的字段
+		Field[] fields = FieldUtils.getAllFields(t.getClass());
+		for (Field field : fields) {
+			Class<?> declaringClass = field.getType();
+			if (declaringClass.isArray() && declaringClass != byte[].class) {
+				return true;
+			}
+			if (List.class.isAssignableFrom(declaringClass)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * 获取一行数据最大单元格数量
+	 *
+	 * @return
+	 */
+	private static int getSingletonCellRowSize(Object t) {
+		int maxSubRows = 1;
+		try {
+			Field[] fields = FieldUtils.getAllFields(t.getClass());
+			for (Field field : fields) {
+				Class<?> declaringClass = field.getType();
+				if (declaringClass.isArray() && declaringClass != byte[].class) {
+					// 数组
+					Object[] arrays = (Object[]) FieldUtils.readField(field, t, true);
+					if (maxSubRows < arrays.length) {
+						maxSubRows = arrays.length;
+					}
+				} else if (List.class.isAssignableFrom(declaringClass)) {
+					List collections = (List) FieldUtils.readField(field, t, true);
+					if (maxSubRows < collections.size()) {
+						maxSubRows = collections.size();
+					}
+				}
+			}
+		} catch (IllegalAccessException e) {
+			e.printStackTrace();
+		}
+		return maxSubRows;
 	}
 
 	/**
@@ -1570,4 +1651,5 @@ public class ExcelUtils {
 			return this;
 		}
 	}
+
 }

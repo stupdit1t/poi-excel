@@ -1,6 +1,7 @@
 package excel.export;
 
 import java.util.Date;
+import java.util.List;
 
 public class ProjectEvaluate {
 
@@ -51,6 +52,11 @@ public class ProjectEvaluate {
 	 * 项目状态
 	 */
 	private String statusName;
+
+	/**
+	 * 得分列表
+	 */
+	private List<Score> scoreList;
 
 	/**
 	 * 总分
@@ -190,4 +196,11 @@ public class ProjectEvaluate {
 		this.leader = leader;
 	}
 
+	public List<Score> getScoreList() {
+		return scoreList;
+	}
+
+	public void setScoreList(List<Score> scoreList) {
+		this.scoreList = scoreList;
+	}
 }

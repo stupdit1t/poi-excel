@@ -5,6 +5,7 @@ import com.github.stupdit1t.excel.ExcelUtils;
 import com.github.stupdit1t.excel.ExcelUtils.ExportRules;
 import com.github.stupdit1t.excel.style.CellPosition;
 import com.github.stupdit1t.excel.style.ICellStyle;
+import org.apache.commons.lang3.RandomUtils;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.HorizontalAlignment;
@@ -67,6 +68,12 @@ public class MainClass {
             obj.setAvg(60.0);
             obj.setCreateTime(new Date());
             obj.setImg(ImageParseBytes(new File("src/test/java/excel/export/1.png")));
+            List<Score> scoreList = new ArrayList<>();
+            int jCount = RandomUtils.nextInt(1, 3);
+            for (int j = 0; j < 2; j++) {
+                scoreList.add(new Score(RandomUtils.nextDouble(1.0,100.0),RandomUtils.nextDouble(1.0,100.0)));
+            }
+            obj.setScoreList(scoreList);
             sheetData.add(obj);
         }
         // 2.map型数据填充
@@ -198,9 +205,9 @@ public class MainClass {
                 // 4.5 设置此列单元格 自定义校验 只能输入文本
                 Column.field("leader").width(4).verifyCustom("VALUE(F3:F500)", "我是提示"),
                 // 4.6设置此列单元格 整数 数据校验 ，同时设置背景色为棕色
-                Column.field("scount").verifyIntNum("10~20").backColor(IndexedColors.BROWN),
+                Column.field("scoreList.score").verifyIntNum("10~20").backColor(IndexedColors.BROWN),
                 // 4.7设置此列单元格 浮点数 数据校验， 同时设置字体颜色红色
-                Column.field("avg").verifyFloatNum("10.0~20.0").color(IndexedColors.RED),
+                Column.field("scoreList.avg").verifyFloatNum("10.0~20.0").color(IndexedColors.RED),
                 // 4.8设置此列单元格 日期 数据校验 ，同时宽度为20、限制用户表格输入、水平居中、垂直居中、背景色、字体颜色
                 Column.field("createTime").width(20).verifyDate("2000-01-03 12:35~3000-05-06 23:23")
                         .align(HorizontalAlignment.LEFT).valign(VerticalAlignment.CENTER)
